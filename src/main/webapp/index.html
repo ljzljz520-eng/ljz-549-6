@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>校园报修 · 在线提交</title>
+    <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<main class="page">
+    <header class="page__header">
+        <h1>校园报修</h1>
+        <p class="subtitle">选择报修地点、描述问题并留下联系方式，提交后系统将生成工单。</p>
+    </header>
+
+    <section class="card">
+        <form id="repair-form" action="api/repair" method="post" novalidate>
+            <div class="field">
+                <label for="location">报修地点类型 <span class="req" aria-hidden="true">*</span></label>
+                <select id="location" name="location">
+                    <option value="">请选择……</option>
+                    <option value="dorm">宿舍</option>
+                    <option value="teaching">教学楼</option>
+                    <option value="canteen">食堂</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="building">具体位置 <span class="req" aria-hidden="true">*</span></label>
+                <input id="building" name="building" type="text"
+                       maxlength="100" autocomplete="off"
+                       placeholder="如：7 号楼 302 / 教学楼 B 座 201 / 第一食堂二楼">
+            </div>
+
+            <div class="field">
+                <label for="description">问题描述 <span class="req" aria-hidden="true">*</span></label>
+                <textarea id="description" name="description" rows="5"
+                          maxlength="500"
+                          placeholder="请描述故障现象，例如：卫生间水龙头漏水、投影仪无法开机……（最多 500 字）"></textarea>
+            </div>
+
+            <div class="field">
+                <label for="contact">联系方式 <span class="req" aria-hidden="true">*</span></label>
+                <input id="contact" name="contact" type="text"
+                       maxlength="50" autocomplete="tel"
+                       placeholder="手机号 / 微信号 / 宿舍固定电话">
+            </div>
+
+            <!-- 提交状态展示区：加载 / 成功 / 失败 -->
+            <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+            <div class="actions">
+                <button id="submit-btn" class="btn btn--primary" type="submit">
+                    <span class="spinner" aria-hidden="true" hidden></span>
+                    <span class="btn__text">提交报修</span>
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <footer class="page__footer">
+        <p>如遇紧急情况（漏水、停电等），请直接拨打后勤热线 010-00000000。</p>
+    </footer>
+</main>
+<script src="assets/js/repair.js"></script>
+</body>
+</html>
