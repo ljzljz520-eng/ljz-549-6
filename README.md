@@ -61,9 +61,12 @@ cp target/campus-repair.war $TOMCAT_HOME/webapps/
 { "code": "MISSING_FIELD", "message": "请填写问题描述。", "field": "description" }
 ```
 
-> 演示效果：Servlet 内置计数器，**每受理 5 个合法请求，第 6 个返回 503 SERVER_BUSY**，
-> 便于观察失败分支；接生产环境时替换为真实的服务可用性判断即可（见
-> `RepairServlet` 中 `BUSY_EVERY` 注释处）。
+> 503 判定：服务端使用有界工单受理通道（`TicketAcceptor`，2 个工作线程 +
+> 容量 100 的有界队列），**仅在下游处理能力真实饱和（受理队列已满）或服务正在
+> 关闭时**才返回 503 `SERVER_BUSY` 并携带 `Retry-After: 5`；正常连续提交不会被
+> 人为拒绝，每个合法请求都会获得工单号。接生产环境时，将
+> `TicketAcceptor#dispatch` 替换为真实的落库 / 派单调用即可，队列满、下游超时等
+> 仍会如实反馈为 503。
 
 ## 前端状态说明
 
@@ -71,7 +74,8 @@ cp target/campus-repair.war $TOMCAT_HOME/webapps/
 - **成功**：绿色面板展示工单号（支持一键复制），可点击“再报一单”重置表单。
 - **失败**：红色面板展示原因，并按错误类型给出不同处理：
   - `MISSING_FIELD` / `INVALID_FIELD`：高亮对应输入框并聚焦；
-  - `SERVER_BUSY`：提示稍后重试，可直接重新提交；
+  - `SERVER_BUSY`：保留已填表单，按响应头 `Retry-After` 在重试按钮上倒计时，
+    倒计时结束后可直接重新提交（该次提交未生成工单号）；
   - `METHOD_NOT_ALLOWED`：提示请求方式不对；
   - 网络异常 / 响应无法解析：单独提示网络问题。
 
@@ -82,7 +86,7 @@ cp target/campus-repair.war $TOMCAT_HOME/webapps/
 ```bash
 BASE=http://localhost:8080/campus-repair/api/repair
 
-# 成功（200，重复 5 次第 6 次会得到 503）
+# 成功（200；只有下游真实饱和/停机时才会得到 503，可连续提交任意次）
 curl -i -X POST "$BASE" \
   --data-urlencode "location=dorm" \
   --data-urlencode "building=7号楼302" \
@@ -98,5 +102,5 @@ curl -i -X POST "$BASE" --data "location=library&building=x&description=y&contac
 # 方法不对（405 METHOD_NOT_ALLOWED）
 curl -i "$BASE"
 
-# 服务器忙（503 SERVER_BUSY）——连续提交至第 6 个合法请求即可复现
+# 服务器忙（503 SERVER_BUSY）——仅当下游受理能力真实饱和或服务停机时出现
 ```

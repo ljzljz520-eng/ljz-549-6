@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 校园报修异步提交接口。
@@ -48,12 +47,27 @@ public class RepairServlet extends HttpServlet {
     private static final DateTimeFormatter TICKET_DATE_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    /** 503 响应中告知客户端的建议重试间隔（秒）。 */
+    private static final int RETRY_AFTER_SECONDS = 5;
+
     /**
-     * 【演示用】模拟服务端繁忙：每处理 5 个请求，第 6 个返回 503。
-     * 生产环境应由线程池/下游服务状态决定，此计数器仅用于演示失败分支。
+     * 工单受理通道：是否返回 503 只取决于其真实状态——
+     * 下游处理能力饱和（受理队列已满）或服务正在关闭时才拒绝，
+     * 不再使用“每 N 个合法请求强制失败一次”的演示计数器。
      */
-    private static final int BUSY_EVERY = 6;
-    private final AtomicInteger requestCounter = new AtomicInteger(0);
+    private TicketAcceptor ticketAcceptor;
+
+    @Override
+    public void init() {
+        ticketAcceptor = new TicketAcceptor();
+    }
+
+    @Override
+    public void destroy() {
+        if (ticketAcceptor != null) {
+            ticketAcceptor.shutdown();
+        }
+    }
 
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp)
@@ -128,19 +142,28 @@ public class RepairServlet extends HttpServlet {
             return;
         }
 
-        // 3) 模拟服务器忙 —— 503 SERVER_BUSY（字段校验通过后再判定）
-        if (requestCounter.incrementAndGet() % BUSY_EVERY == 0) {
-            resp.setHeader("Retry-After", "5");
+        // 3) 生成工单号并提交受理通道；只有真实不可用（饱和 / 停机）才返回 503
+        String ticketNo = generateTicketNo();
+        TicketAcceptor.Ticket ticket = new TicketAcceptor.Ticket(
+                ticketNo, location, building, description, contact);
+        TicketAcceptor.AcceptResult result = ticketAcceptor.accept(ticket);
+
+        if (result == TicketAcceptor.AcceptResult.REJECTED) {
+            resp.setHeader("Retry-After", String.valueOf(RETRY_AFTER_SECONDS));
             writeJson(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
                     errorBody("SERVER_BUSY",
                             "服务器忙，报修单暂时无法受理，请稍后重试。"));
             return;
         }
+        if (result == TicketAcceptor.AcceptResult.SHUTDOWN) {
+            resp.setHeader("Retry-After", String.valueOf(RETRY_AFTER_SECONDS));
+            writeJson(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    errorBody("SERVER_BUSY",
+                            "服务正在维护，报修单暂时无法受理，请稍后重试。"));
+            return;
+        }
 
-        // 4) 受理成功，生成工单号
-        String ticketNo = generateTicketNo();
-
-        // 实际项目中此处落库/派发工单；这里仅记录到容器日志
+        // 4) 受理成功（工单已可靠进入受理通道），返回工单号
         log(String.format("报修受理成功 ticket=%s location=%s building=%s contact=%s",
                 ticketNo, location, building, contact));
 

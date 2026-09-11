@@ -94,7 +94,7 @@
         statusBox.appendChild(actions);
     }
 
-    function showError(code, message, field) {
+    function showError(code, message, field, retryAfter) {
         statusBox.hidden = false;
         statusBox.className = 'status status--error';
         statusBox.appendChild(el('p', 'status__title', '提交失败'));
@@ -109,14 +109,37 @@
         var actions = el('div', 'status__actions');
         var retryBtn = el('button', 'btn btn--ghost', '重新填写 / 重试');
         retryBtn.type = 'button';
+        actions.appendChild(retryBtn);
+        statusBox.appendChild(actions);
+
+        // 503 SERVER_BUSY：尊重服务端 Retry-After，倒计时结束后再允许重试。
+        // 表单内容保留，用户无需重新填写（该次提交未生成工单号）。
+        if (code === 'SERVER_BUSY' && retryAfter > 0) {
+            var remaining = retryAfter;
+            var originalLabel = '重新填写 / 重试';
+            var tick = function () {
+                if (remaining > 0) {
+                    retryBtn.disabled = true;
+                    retryBtn.textContent = originalLabel + '（' + remaining + ' 秒）';
+                    remaining -= 1;
+                    retryBtn._timer = setTimeout(tick, 1000);
+                } else {
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = originalLabel;
+                }
+            };
+            tick();
+        }
+
         retryBtn.addEventListener('click', function () {
+            if (retryBtn._timer) {
+                clearTimeout(retryBtn._timer);
+            }
             hideStatus();
             if (field && form.elements[field]) {
                 form.elements[field].focus();
             }
         });
-        actions.appendChild(retryBtn);
-        statusBox.appendChild(actions);
     }
 
     function copyText(text, btn) {
@@ -189,13 +212,18 @@
             body: payload.toString()
         }).then(function (response) {
             // 405/503 同样返回 JSON，按 HTTP 状态与业务 code 双重处理
+            // Retry-After：503 时服务端建议的重试等待秒数
+            var retryAfter = parseInt(response.headers.get('Retry-After'), 10);
             return response.json().then(function (data) {
-                return { status: response.status, data: data };
+                return { status: response.status, data: data, retryAfter: retryAfter };
             }).catch(function () {
                 return {
                     status: response.status,
+                    retryAfter: retryAfter,
                     data: {
-                        code: response.ok ? 'BAD_RESPONSE' : 'HTTP_' + response.status,
+                        code: response.ok
+                            ? 'BAD_RESPONSE'
+                            : (response.status === 503 ? 'SERVER_BUSY' : 'HTTP_' + response.status),
                         message: response.ok
                             ? '服务器返回格式异常，请稍后重试。'
                             : '服务暂时不可用，请稍后重试。'
@@ -227,7 +255,8 @@
                 clearFieldErrors();
             } else {
                 // 区分：MISSING_FIELD / INVALID_FIELD / SERVER_BUSY / METHOD_NOT_ALLOWED
-                showError(data.code, data.message || ERROR_MESSAGES[data.code], data.field);
+                showError(data.code, data.message || ERROR_MESSAGES[data.code], data.field,
+                    result.retryAfter);
             }
         }).catch(function () {
             showError('NETWORK_ERROR', '网络连接异常，请检查网络后重试。', null);
